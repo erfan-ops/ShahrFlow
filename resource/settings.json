@@ -1,0 +1,18 @@
+{
+    "fps": 60,
+    "vsync": false,
+  
+    "hexagon-size": 30,
+
+    "edges": {
+      "width": 2,
+      "color": [ 0.996, 0.843, 0.843, 0.6 ]
+    },
+
+    "mouse-barrier": {
+      "radius": 220
+    },
+
+    "MSAA": 2
+  }
+  
