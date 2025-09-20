@@ -13,7 +13,13 @@ Settings loadSettings(const std::string& filename) {
 	settings.targetFPS = j["fps"];
 	settings.vsync = j["vsync"];
 
+	settings.backgroundColor = j["background-color"].get<Color>();
+
 	settings.hexagonSize = j["hexagon-size"];
+
+	settings.cube.topColor = j["cube"]["top-color"].get<Color>();
+	settings.cube.leftColor = j["cube"]["left-color"].get<Color>();
+	settings.cube.rightColor = j["cube"]["right-color"].get<Color>();
 
 	settings.edges.width =j["edges"]["width"];
 	settings.edges.color = j["edges"]["color"].get<Color>();

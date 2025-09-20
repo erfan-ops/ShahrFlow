@@ -11,7 +11,15 @@ struct Settings {
 	float targetFPS;
 	bool vsync;
 
+	Color backgroundColor;
+
 	float hexagonSize;
+
+	struct Cube {
+		Color topColor;
+		Color leftColor;
+		Color rightColor;
+	} cube;
 
 	struct Edges {
 		float width;

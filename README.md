@@ -53,31 +53,73 @@ Customize behavior in `settings.json`:
 
 ```jsonc
 {
-    "fps": 60,
+    "fps": 120,
     "vsync": false,
 
-    "hexagon-size": 30,
+    "background-color": [1, 1, 1, 1],
+  
+    "hexagon-size": 50,
+
+    "cube": {
+        "top-color": [0.898, 0.243, 0.243, 1.0],
+        "left-color": [0.773, 0.188, 0.188, 1.0],
+        "right-color": [0.455, 0.165, 0.165, 1.0]
+    },
 
     "edges": {
-      "width": 2,
-      "color": [ 0.996, 0.843, 0.843, 0.6 ]
+        "width": 1.5,
+        "color": [ 0.996, 0.843, 0.843, 0.6 ]
     },
 
     "mouse-barrier": {
-      "radius": 220
+        "radius": 200,
+        "reverse": false,
+        "fade-area": 150
+    },
+
+    "wave": {
+        "speed": 420,
+        "width": 370,
+        "interval": 6.2,
+        "color": [1, 0, 0, 1]
     },
 
     "MSAA": 2
 }
 ```
 
-- `fps` → target frame rate (ignored if VSync is enabled).  
-- `vsync` → toggle vertical sync.  
-- `hexagon-size` → size of each hexagon in pixels.  
-- `edges.width` → thickness of hexagon outlines.  
-- `edges.color` → RGBA of hexagon edges.  
-- `mouse-barrier.radius` → interactive radius for mouse hover effects.  
-- `MSAA` → anti-aliasing level.  
+### Settings Overview
+
+These options can be customized in `settings.json` to change how ShahrFlow looks and behaves:
+
+- **`fps`** → Maximum frames per second. Ignored if `vsync` is enabled.  
+- **`vsync`** → Synchronizes rendering with your monitor’s refresh rate. Reduces tearing, but ignores `fps`.  
+- **`background-color`** → The wallpaper’s background color in RGBA format `[R, G, B, A]`.  
+- **`hexagon-size`** → Size of each hexagon (and cube face) in pixels. Larger values create bigger hexagons.  
+
+#### 🎨 Cube Colors
+- **`cube.top-color`** → The fill color of the cube’s top face.  
+- **`cube.left-color`** → The fill color of the cube’s left face.  
+- **`cube.right-color`** → The fill color of the cube’s right face.  
+
+#### ✏️ Edges
+- **`edges.width`** → Thickness of cube/hexagon outlines.  
+- **`edges.color`** → Outline color in RGBA format.  
+
+#### 🖱️ Mouse Barrier
+- **`mouse-barrier.radius`** → Distance (in pixels) around the cursor where outlines react.  
+- **`mouse-barrier.reverse`** → If `true`, outlines are visible everywhere *except* near the cursor.  
+- **`mouse-barrier.fade-area`** → A soft fade region (in pixels) where outlines gradually disappear instead of cutting off sharply.  
+
+#### 🌊 Waves
+- **`wave.speed`** → Movement speed of the wave animation.  
+- **`wave.width`** → Width (or thickness) of the wave.  
+- **`wave.interval`** → Time spacing between consecutive waves.  
+- **`wave.color`** → Color of the wave in RGBA format.  
+
+#### 🖼️ Anti-Aliasing
+- **`MSAA`** → Level of multi-sample anti-aliasing. Higher values smooth edges but may cost performance.  
+
 
 ---
 

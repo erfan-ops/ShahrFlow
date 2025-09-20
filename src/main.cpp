@@ -266,10 +266,6 @@ int main() {
                 glm::vec2 leftBottom(x - hexagonSliceWidth, y - hexagonHalfSize);
                 glm::vec2 rightBottom(x + hexagonSliceWidth, y - hexagonHalfSize);
 
-                Color fill1 = {0.898f, 0.243f, 0.243f, 1.0f};
-                Color fill2 = {0.773f, 0.188f, 0.188f, 1.0f};
-                Color fill3 = {0.455f, 0.165f, 0.165f, 1.0f};
-
                 // For each of the 6 triangles: compute random once and add static triangle + push edges
                 auto addTriWithOneTimeRandom = [&](const glm::vec2& p1, const glm::vec2& p2, const glm::vec2& p3, Color baseFill) {
                     float triangleY = (p1.y + p2.y + p3.y) / 3.0f;
@@ -279,7 +275,7 @@ int main() {
                     // float probability = 1.0f / (1.0f + exp(-10.0f * (normalizedY - 0.5f)));
                     Color fill = baseFill;
                     if (randomUniformGlobal(0.0f, 1.0f) < probability) {
-                        fill = {1.0f, 1.0f, 1.0f, 1.0f};
+                        fill = {0.0f, 0.0f, 0.0f, 0.0f};
                     }
                     addTriangleStatic(p1, p2, p3, fill);
 
@@ -289,12 +285,12 @@ int main() {
                     pushEdgeForDynamic(p3, p1, settings.edges.color, settings.edges.width);
                 };
 
-                addTriWithOneTimeRandom(c, top, leftTop, fill1);
-                addTriWithOneTimeRandom(c, top, rightTop, fill1);
-                addTriWithOneTimeRandom(c, leftTop, leftBottom, fill2);
-                addTriWithOneTimeRandom(c, rightTop, rightBottom, fill3);
-                addTriWithOneTimeRandom(c, bottom, leftBottom, fill2);
-                addTriWithOneTimeRandom(c, bottom, rightBottom, fill3);
+                addTriWithOneTimeRandom(c, top, leftTop, settings.cube.topColor);
+                addTriWithOneTimeRandom(c, top, rightTop, settings.cube.topColor);
+                addTriWithOneTimeRandom(c, leftTop, leftBottom, settings.cube.leftColor);
+                addTriWithOneTimeRandom(c, rightTop, rightBottom, settings.cube.rightColor);
+                addTriWithOneTimeRandom(c, bottom, leftBottom, settings.cube.leftColor);
+                addTriWithOneTimeRandom(c, bottom, rightBottom, settings.cube.rightColor);
             }
         }
     };
@@ -395,7 +391,7 @@ int main() {
 
         glfwGetCursorPos(window, &mouseX, &mouseY);
 
-        glClearColor(1.f, 1.f, 1.f, 1.f);
+        glClearColor(settings.backgroundColor[0], settings.backgroundColor[1], settings.backgroundColor[2], settings.backgroundColor[3]);
         glClear(GL_COLOR_BUFFER_BIT);
 
         // --- Build outlines based on edges and current mouse (only this happens per-frame) ---

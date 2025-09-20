@@ -1,8 +1,16 @@
 {
     "fps": 120,
     "vsync": false,
+
+    "background-color": [1, 1, 1, 1],
   
     "hexagon-size": 50,
+
+    "cube": {
+      "top-color": [0.898, 0.243, 0.243, 1.0],
+      "left-color": [0.773, 0.188, 0.188, 1.0],
+      "right-color": [0.455, 0.165, 0.165, 1.0]
+    },
 
     "edges": {
       "width": 1.5,
