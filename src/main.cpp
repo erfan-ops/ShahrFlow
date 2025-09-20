@@ -222,16 +222,12 @@ int main() {
                 float factor = 1.0f - (distToWave / waveThickness);
                 factor = glm::clamp(factor, 0.0f, 1.0f);
 
-                // Pure wave color, but alpha fades out toward edges
-                float waveAlpha = settings.wave.color[3] * factor;
-                float alphaNormalizer = waveAlpha + alpha;
-                waveAlpha /= alphaNormalizer;
-                alpha /= alphaNormalizer;
-
-                color[0] = color[0] * alpha + settings.wave.color[0] * waveAlpha;
-                color[1] = color[1] * alpha + settings.wave.color[1] * waveAlpha;
-                color[2] = color[2] * alpha + settings.wave.color[2] * waveAlpha;
-                alpha = 1.0f;
+                float wAlpha = settings.wave.color[3] * factor; // wave alpha
+                float bAlpha = alpha;                           // barrier alpha
+                alpha = 1 - (1 - bAlpha) * (1 - wAlpha);
+                color[0] = (color[0] * bAlpha / alpha) + (settings.wave.color[0] * wAlpha * (1 - bAlpha) / alpha);
+                color[1] = (color[1] * bAlpha / alpha) + (settings.wave.color[1] * wAlpha * (1 - bAlpha) / alpha);
+                color[2] = (color[2] * bAlpha / alpha) + (settings.wave.color[2] * wAlpha * (1 - bAlpha) / alpha);
             }
         }
 
