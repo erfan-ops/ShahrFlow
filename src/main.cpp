@@ -154,7 +154,8 @@ int main() {
 
     bool waveActive = false;
     float waveStartTime = 0.0f;
-    float waveDuration = Width / settings.wave.speed;
+    float waveTravelDistance = Width + settings.wave.width;
+    float waveDuration = waveTravelDistance / settings.wave.speed;
     float waveInterval = settings.wave.interval;
 
     // ---------- mouse ----------
@@ -202,7 +203,7 @@ int main() {
         // Wave effect
         if (waveActive) {
             float waveProgress = (glfwTime - waveStartTime) / waveDuration;
-            float waveX = waveProgress * Width;
+            float waveX = -settings.wave.width * 0.5f + waveProgress * (Width + settings.wave.width);
 
             float distToWave = fabs(midpoint.x - waveX);
             float waveThickness = settings.wave.width * 0.5f;
