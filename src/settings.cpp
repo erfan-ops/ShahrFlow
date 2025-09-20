@@ -20,6 +20,11 @@ Settings loadSettings(const std::string& filename) {
 
 	settings.barrier.radius = j["mouse-barrier"]["radius"];
 
+	settings.wave.speed = j["wave"]["speed"];
+	settings.wave.width = j["wave"]["width"];
+	settings.wave.interval = j["wave"]["interval"];
+	settings.wave.color = j["wave"]["color"].get<Color>();
+
 	settings.MSAA = j["MSAA"];
 
 	return settings;

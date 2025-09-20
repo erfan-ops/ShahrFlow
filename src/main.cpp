@@ -21,6 +21,7 @@
 #include "trayUtils.h"
 #include "utils.h"
 
+
 // --- Random engine (single global engine, seeded once) ---
 static std::random_device rd_global;
 static std::mt19937 gen_global(rd_global());
@@ -151,6 +152,11 @@ int main() {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
+    bool waveActive = false;
+    float waveStartTime = 0.0f;
+    float waveDuration = Width / settings.wave.speed;
+    float waveInterval = settings.wave.interval;
+
     // ---------- mouse ----------
     double mouseX = 0.0, mouseY = 0.0;
 
@@ -174,7 +180,7 @@ int main() {
     };
 
     // dynamic outline creation for a single edge (uses current mouse)
-    auto addEdgeDynamicToOutlineVertices = [&](const glm::vec2& p1, const glm::vec2& p2, Color color, float width, double curMouseX, double curMouseY) {
+    auto addEdgeDynamicToOutlineVertices = [&](const glm::vec2& p1, const glm::vec2& p2, Color color, float width, double curMouseX, double curMouseY, float glfwTime) {
         glm::vec2 edge = glm::normalize(p2 - p1);
         glm::vec2 normal(-edge.y, edge.x);
         glm::vec2 offset = normal * (width * 0.5f);
@@ -189,6 +195,28 @@ int main() {
         float alpha = 0.0f;
         if (dist < settings.barrier.radius) {
             alpha = (1.0f - dist / settings.barrier.radius) * color[3];
+        }
+
+        glm::vec2 midpoint = (p1 + p2) * 0.5f;
+
+        // Wave effect
+        if (waveActive) {
+            float waveProgress = (glfwTime - waveStartTime) / waveDuration;
+            float waveX = waveProgress * Width;
+
+            float distToWave = fabs(midpoint.x - waveX);
+            float waveThickness = settings.wave.width * 0.5f;
+
+            if (distToWave < waveThickness) {
+                float factor = 1.0f - (distToWave / waveThickness);
+                factor = glm::clamp(factor, 0.0f, 1.0f);
+
+                // Pure wave color, but alpha fades out toward edges
+                color[0] = settings.wave.color[0];
+                color[1] = settings.wave.color[1];
+                color[2] = settings.wave.color[2];
+                alpha    = settings.wave.color[3] * factor;
+            }
         }
 
         // First triangle
@@ -234,7 +262,9 @@ int main() {
                 auto addTriWithOneTimeRandom = [&](const glm::vec2& p1, const glm::vec2& p2, const glm::vec2& p3, Color baseFill) {
                     float triangleY = (p1.y + p2.y + p3.y) / 3.0f;
                     float normalizedY = triangleY / Height;
-                    float probability = pow(normalizedY, 2.0f); // quadratic bias: more likely at top
+                    // float probability = normalizedY;
+                    float probability = pow(normalizedY, 2.0f);
+                    // float probability = 1.0f / (1.0f + exp(-10.0f * (normalizedY - 0.5f)));
                     Color fill = baseFill;
                     if (randomUniformGlobal(0.0f, 1.0f) < probability) {
                         fill = {1.0f, 1.0f, 1.0f, 1.0f};
@@ -338,6 +368,19 @@ int main() {
         newF = std::chrono::high_resolution_clock::now();
         dt = std::chrono::duration<float>(newF - oldF).count();
 
+        float glfwTime = static_cast<float>(glfwGetTime()); // or your timer system
+
+        // Start a new wave every interval
+        if (!waveActive && fmod(glfwTime, waveInterval) < dt) {
+            waveActive = true;
+            waveStartTime = glfwTime;
+        }
+
+        // Check if current wave finished
+        if (waveActive && (glfwTime - waveStartTime) > waveDuration) {
+            waveActive = false;
+        }
+
         glfwGetCursorPos(window, &mouseX, &mouseY);
 
         glClearColor(1.f, 1.f, 1.f, 1.f);
@@ -348,7 +391,7 @@ int main() {
         outlineVertices.reserve(edges.size() * 6); // each edge -> 6 vertices (two tris)
 
         for (const EdgeData& e : edges) {
-            addEdgeDynamicToOutlineVertices(e.p1, e.p2, e.color, e.width, mouseX, mouseY);
+            addEdgeDynamicToOutlineVertices(e.p1, e.p2, e.color, e.width, mouseX, mouseY, glfwTime);
         }
 
         // upload outlineVertices to dynamic VBO

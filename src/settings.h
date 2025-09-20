@@ -22,6 +22,13 @@ struct Settings {
 		float radius;
 	} barrier;
 
+	struct Wave {
+		float speed;
+		float width;
+		float interval;
+		Color color;
+	} wave;
+
 	int MSAA;
 };
 
