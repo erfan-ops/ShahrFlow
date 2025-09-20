@@ -55,11 +55,10 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
-// Vertex structure (same as your original)
+// Vertex structure for static geometry (triangles)
 struct Vertex {
     float x;
     float y;
-
     float r;
     float g;
     float b;
@@ -70,25 +69,27 @@ struct Vertex {
     Vertex(float x, float y, Color color) : x(x), y(y), r(color[0]), g(color[1]), b(color[2]), a(color[3]) {}
 };
 
-// Edge storage for dynamic outlines
-struct EdgeData {
-    glm::vec2 p1;
-    glm::vec2 p2;
-    Color color;
-    float width;
+// Vertex structure for dynamic edge geometry
+struct EdgeVertex {
+    float x;
+    float y;
+    float r;
+    float g;
+    float b;
+    float a;
+    float edgeP1_x;
+    float edgeP1_y;
+    float edgeP2_x;
+    float edgeP2_y;
+
+    EdgeVertex(float x, float y, Color color, const glm::vec2& p1, const glm::vec2& p2) 
+        : x(x), y(y), r(color[0]), g(color[1]), b(color[2]), a(color[3]),
+          edgeP1_x(p1.x), edgeP1_y(p1.y), edgeP2_x(p2.x), edgeP2_y(p2.y) {}
 };
 
-// Helper: point-to-segment distance (kept as lambda originally)
-static float pointToSegmentDist(const glm::vec2& p, const glm::vec2& a, const glm::vec2& b) {
-    glm::vec2 ab = b - a;
-    glm::vec2 ap = p - a;
-    float denom = glm::dot(ab, ab);
-    if (denom == 0.0f) return glm::length(p - a);
-    float t = glm::dot(ap, ab) / denom;
-    t = glm::clamp(t, 0.0f, 1.0f);
-    glm::vec2 closest = a + t * ab;
-    return glm::length(p - closest);
-}
+// Note: Edge data now stored as vertex attributes in EdgeVertex struct
+
+// Note: point-to-segment distance calculation moved to GPU shaders
 
 int main() {
     // ---------- GLFW / GL init ----------
@@ -113,7 +114,7 @@ int main() {
     // using multi-sample anti-aliasing
     glfwWindowHint(GLFW_SAMPLES, settings.MSAA);
 
-    window = glfwCreateWindow(iWidth, iHeight, "Delaunay Flow", nullptr, nullptr);
+    window = glfwCreateWindow(iWidth, iHeight, "ShahrFlow", nullptr, nullptr);
     if (!window) {
         std::cerr << "Failed to create GLFW window\n";
         glfwTerminate();
@@ -163,8 +164,7 @@ int main() {
 
     // ---------- geometry storage ----------
     std::vector<Vertex> triangleVertices; // static: generated once at startup (fills)
-    std::vector<EdgeData> edges;          // list of edges for outlines (positions/color/width)
-    std::vector<Vertex> outlineVertices;  // dynamic: regenerated each frame (outlines)
+    std::vector<EdgeVertex> edgeVertices; // static: edge geometry with edge data (generated once)
 
     // ---------- helpers to add geometry ----------
     auto addTriangleStatic = [&](const glm::vec2& p1, const glm::vec2& p2, const glm::vec2& p3, Color color) {
@@ -173,15 +173,8 @@ int main() {
         triangleVertices.emplace_back(p3.x, p3.y, color[0], color[1], color[2], color[3]);
     };
 
-    auto pushEdgeForDynamic = [&](const glm::vec2& p1, const glm::vec2& p2, Color color, float width) {
-        EdgeData e;
-        e.p1 = p1; e.p2 = p2; e.width = width;
-        e.color[0] = color[0]; e.color[1] = color[1]; e.color[2] = color[2]; e.color[3] = color[3];
-        edges.push_back(e);
-    };
-
-    // dynamic outline creation for a single edge (uses current mouse)
-    auto addEdgeDynamicToOutlineVertices = [&](const glm::vec2& p1, const glm::vec2& p2, Color color, float width, double curMouseX, double curMouseY, float glfwTime) {
+    // Helper to generate edge geometry with edge data stored as vertex attributes
+    auto addEdgeGeometry = [&](const glm::vec2& p1, const glm::vec2& p2, Color color, float width) {
         glm::vec2 edge = glm::normalize(p2 - p1);
         glm::vec2 normal(-edge.y, edge.x);
         glm::vec2 offset = normal * (width * 0.5f);
@@ -191,69 +184,31 @@ int main() {
         glm::vec2 q3 = p2 - offset;
         glm::vec2 q4 = p1 - offset;
 
-        glm::vec2 mouse(static_cast<float>(curMouseX), Height - static_cast<float>(curMouseY));
-        float dist = pointToSegmentDist(mouse, p1, p2);
-        float alpha = 0.0f;
-        if (settings.barrier.reverse) {
-            if (dist > settings.barrier.radius + settings.barrier.fadeArea) {
-                alpha = color[3];
-            } else if (dist > settings.barrier.radius) {
-                alpha = ((dist - settings.barrier.radius) / settings.barrier.fadeArea) * color[3];
-            }
-        }
-        else {
-            if (dist < settings.barrier.radius) {
-                alpha = (1.0f - dist / settings.barrier.radius) * color[3];
-            }
-        }
-        
-
-        glm::vec2 midpoint = (p1 + p2) * 0.5f;
-
-        // Wave effect
-        if (waveActive) {
-            float waveProgress = (glfwTime - waveStartTime) / waveDuration;
-            float waveX = -settings.wave.width * 0.5f + waveProgress * (Width + settings.wave.width);
-
-            float distToWave = fabs(midpoint.x - waveX);
-            float waveThickness = settings.wave.width * 0.5f;
-
-            if (distToWave < waveThickness) {
-                float factor = 1.0f - (distToWave / waveThickness);
-                factor = glm::clamp(factor, 0.0f, 1.0f);
-
-                float wAlpha = settings.wave.color[3] * factor; // wave alpha
-                float bAlpha = alpha;                           // barrier alpha
-                alpha = 1 - (1 - bAlpha) * (1 - wAlpha);
-                color[0] = (color[0] * bAlpha / alpha) + (settings.wave.color[0] * wAlpha * (1 - bAlpha) / alpha);
-                color[1] = (color[1] * bAlpha / alpha) + (settings.wave.color[1] * wAlpha * (1 - bAlpha) / alpha);
-                color[2] = (color[2] * bAlpha / alpha) + (settings.wave.color[2] * wAlpha * (1 - bAlpha) / alpha);
-            }
-        }
-
         // First triangle
-        outlineVertices.emplace_back(q1.x, q1.y, color[0], color[1], color[2], alpha);
-        outlineVertices.emplace_back(q2.x, q2.y, color[0], color[1], color[2], alpha);
-        outlineVertices.emplace_back(q3.x, q3.y, color[0], color[1], color[2], alpha);
+        edgeVertices.emplace_back(q1.x, q1.y, color, p1, p2);
+        edgeVertices.emplace_back(q2.x, q2.y, color, p1, p2);
+        edgeVertices.emplace_back(q3.x, q3.y, color, p1, p2);
 
         // Second triangle
-        outlineVertices.emplace_back(q1.x, q1.y, color[0], color[1], color[2], alpha);
-        outlineVertices.emplace_back(q3.x, q3.y, color[0], color[1], color[2], alpha);
-        outlineVertices.emplace_back(q4.x, q4.y, color[0], color[1], color[2], alpha);
+        edgeVertices.emplace_back(q1.x, q1.y, color, p1, p2);
+        edgeVertices.emplace_back(q3.x, q3.y, color, p1, p2);
+        edgeVertices.emplace_back(q4.x, q4.y, color, p1, p2);
     };
+
+    // Note: Wave effects will be handled in shaders as well
 
     // This builds the triangles (with randomization applied once) and stores the edges for outlines.
     auto insertHexagonsInit = [&]() -> void {
-        float hexagonWidth = 1.7320508075688772f * settings.hexagonSize;
-        float hexagonSliceWidth = 0.8660254037844386f * settings.hexagonSize;
-        float hexagonHeight = 2.0f * settings.hexagonSize;
-        float hexagonYDis = 1.5f * settings.hexagonSize;
-        float hexagonHalfSize = 0.5f * settings.hexagonSize;
-        int hexagonsInWidth = static_cast<int>(Width / hexagonWidth) + 2;
-        int hexagonsInHeight = static_cast<int>(Height / hexagonYDis) + 1;
+        const float hexagonWidth = 1.7320508075688772f * settings.hexagonSize;
+        const float hexagonSliceWidth = 0.8660254037844386f * settings.hexagonSize;
+        const float hexagonHeight = 2.0f * settings.hexagonSize;
+        const float hexagonYDis = 1.5f * settings.hexagonSize;
+        const float hexagonHalfSize = 0.5f * settings.hexagonSize;
+        const int hexagonsInWidth = static_cast<int>(Width / hexagonWidth) + 2;
+        const int hexagonsInHeight = static_cast<int>(Height / hexagonYDis) + 1;
 
         triangleVertices.reserve(hexagonsInHeight * hexagonsInWidth * 6 * 3); // 6 triangles per hexagon, 3 verts each
-        edges.reserve(hexagonsInHeight * hexagonsInWidth * 6 * 3); // 3 edges per triangle -> safe reserve
+        edgeVertices.reserve(hexagonsInHeight * hexagonsInWidth * 6 * 3 * 6); // 3 edges per triangle, 6 verts per edge
 
         for (int iy = 0; iy <= hexagonsInHeight; iy++) {
             float y = iy * hexagonYDis;
@@ -279,10 +234,10 @@ int main() {
                     }
                     addTriangleStatic(p1, p2, p3, fill);
 
-                    // store edges so outlines can be generated each frame
-                    pushEdgeForDynamic(p1, p2, settings.edges.color, settings.edges.width);
-                    pushEdgeForDynamic(p2, p3, settings.edges.color, settings.edges.width);
-                    pushEdgeForDynamic(p3, p1, settings.edges.color, settings.edges.width);
+                    // generate edge geometry once (with edge data as vertex attributes)
+                    addEdgeGeometry(p1, p2, settings.edges.color, settings.edges.width);
+                    addEdgeGeometry(p2, p3, settings.edges.color, settings.edges.width);
+                    addEdgeGeometry(p3, p1, settings.edges.color, settings.edges.width);
                 };
 
                 addTriWithOneTimeRandom(c, top, leftTop, settings.cube.topColor);
@@ -297,16 +252,16 @@ int main() {
 
     // ---------- Create VAOs / VBOs ----------
     GLuint staticVAO = 0, staticVBO = 0;
-    GLuint dynamicVAO = 0, dynamicVBO = 0;
+    GLuint edgeVAO = 0, edgeVBO = 0;
 
     glGenVertexArrays(1, &staticVAO);
     glGenBuffers(1, &staticVBO);
 
-    glGenVertexArrays(1, &dynamicVAO);
-    glGenBuffers(1, &dynamicVBO);
+    glGenVertexArrays(1, &edgeVAO);
+    glGenBuffers(1, &edgeVBO);
 
-    // ---------- Build static geometry (triangles) once ----------
-    insertHexagonsInit(); // fills triangleVertices and edges (one-time)
+    // ---------- Build static geometry (triangles and edges) once ----------
+    insertHexagonsInit(); // fills triangleVertices and edgeVertices (one-time)
 
     // Bind static VAO & VBO and upload triangle data
     glBindVertexArray(staticVAO);
@@ -331,29 +286,66 @@ int main() {
 
     glBindVertexArray(0);
 
-    // Setup dynamic VAO (for outlines). We'll upload data each frame to dynamicVBO.
-    glBindVertexArray(dynamicVAO);
-    glBindBuffer(GL_ARRAY_BUFFER, dynamicVBO);
-    // allocate small initial size; we'll reallocate with glBufferData each frame
-    glBufferData(GL_ARRAY_BUFFER, 1, nullptr, GL_DYNAMIC_DRAW);
+    // Setup edge VAO (for outlines with edge data)
+    glBindVertexArray(edgeVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, edgeVBO);
+    if (!edgeVertices.empty()) {
+        glBufferData(GL_ARRAY_BUFFER,
+                     edgeVertices.size() * sizeof(EdgeVertex),
+                     edgeVertices.data(),
+                     GL_STATIC_DRAW);
+    } else {
+        glBufferData(GL_ARRAY_BUFFER, 1, nullptr, GL_STATIC_DRAW);
+    }
 
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
+    // Position (location 0) vec2
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(EdgeVertex), (void*)0);
     glEnableVertexAttribArray(0);
 
-    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, r));
+    // Color (location 1) vec4
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(EdgeVertex), (void*)offsetof(EdgeVertex, r));
     glEnableVertexAttribArray(1);
+
+    // Edge point 1 (location 2) vec2
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(EdgeVertex), (void*)offsetof(EdgeVertex, edgeP1_x));
+    glEnableVertexAttribArray(2);
+
+    // Edge point 2 (location 3) vec2
+    glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, sizeof(EdgeVertex), (void*)offsetof(EdgeVertex, edgeP2_x));
+    glEnableVertexAttribArray(3);
 
     glBindVertexArray(0);
 
     // ---------- compile shaders ----------
-    GLuint shaderProgram = shaderUtils::compileShaders("shaders/vertex.glsl", "shaders/fragment.glsl");
-    if (shaderProgram == 0) {
-        std::cerr << "Failed to compile shaders!" << std::endl;
+    GLuint staticShaderProgram = shaderUtils::compileShaders("shaders/static_vertex.glsl", "shaders/static_fragment.glsl");
+    if (staticShaderProgram == 0) {
+        std::cerr << "Failed to compile static shaders!" << std::endl;
+        return -1;
+    }
+    
+    GLuint edgeShaderProgram = shaderUtils::compileShaders("shaders/edge_vertex.glsl", "shaders/edge_fragment.glsl");
+    if (edgeShaderProgram == 0) {
+        std::cerr << "Failed to compile edge shaders!" << std::endl;
         return -1;
     }
 
-    GLint halfWidthLocation  = glGetUniformLocation(shaderProgram, "halfWidth");
-    GLint halfHeightLocation = glGetUniformLocation(shaderProgram, "halfHeight");
+    // Static shader uniforms
+    GLint staticHalfWidthLocation  = glGetUniformLocation(staticShaderProgram, "halfWidth");
+    GLint staticHalfHeightLocation = glGetUniformLocation(staticShaderProgram, "halfHeight");
+    
+    // Edge shader uniforms
+    GLint edgeHalfWidthLocation  = glGetUniformLocation(edgeShaderProgram, "halfWidth");
+    GLint edgeHalfHeightLocation = glGetUniformLocation(edgeShaderProgram, "halfHeight");
+    GLint mousePosLocation = glGetUniformLocation(edgeShaderProgram, "mousePos");
+    GLint barrierRadiusLocation = glGetUniformLocation(edgeShaderProgram, "barrierRadius");
+    GLint fadeAreaLocation = glGetUniformLocation(edgeShaderProgram, "fadeArea");
+    GLint reverseModeLocation = glGetUniformLocation(edgeShaderProgram, "reverseMode");
+    
+    // Wave effect uniforms
+    GLint waveProgressLocation = glGetUniformLocation(edgeShaderProgram, "waveProgress");
+    GLint waveXLocation = glGetUniformLocation(edgeShaderProgram, "waveX");
+    GLint waveWidthLocation = glGetUniformLocation(edgeShaderProgram, "waveWidth");
+    GLint waveColorLocation = glGetUniformLocation(edgeShaderProgram, "waveColor");
 
     // frame timing
     const float stepInterval = 1.0f / settings.targetFPS;
@@ -394,39 +386,47 @@ int main() {
         glClearColor(settings.backgroundColor[0], settings.backgroundColor[1], settings.backgroundColor[2], settings.backgroundColor[3]);
         glClear(GL_COLOR_BUFFER_BIT);
 
-        // --- Build outlines based on edges and current mouse (only this happens per-frame) ---
-        outlineVertices.clear();
-        outlineVertices.reserve(edges.size() * 6); // each edge -> 6 vertices (two tris)
-
-        for (const EdgeData& e : edges) {
-            addEdgeDynamicToOutlineVertices(e.p1, e.p2, e.color, e.width, mouseX, mouseY, glfwTime);
-        }
-
-        // upload outlineVertices to dynamic VBO
-        glBindBuffer(GL_ARRAY_BUFFER, dynamicVBO);
-        if (!outlineVertices.empty()) {
-            glBufferData(GL_ARRAY_BUFFER,
-                         outlineVertices.size() * sizeof(Vertex),
-                         outlineVertices.data(),
-                         GL_DYNAMIC_DRAW);
-        } else {
-            // keep at least a tiny buffer to avoid undefined behaviour
-            glBufferData(GL_ARRAY_BUFFER, 1, nullptr, GL_DYNAMIC_DRAW);
-        }
-
-        // use shader and set uniforms
-        glUseProgram(shaderProgram);
-        glUniform1f(halfWidthLocation, HalfWidth);
-        glUniform1f(halfHeightLocation, HalfHeight);
-
-        // draw static triangles (fills)
+        // draw static triangles (fills) with static shader
+        glUseProgram(staticShaderProgram);
+        glUniform1f(staticHalfWidthLocation, HalfWidth);
+        glUniform1f(staticHalfHeightLocation, HalfHeight);
+        
         glBindVertexArray(staticVAO);
         glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(triangleVertices.size()));
         glBindVertexArray(0);
 
-        // draw outlines (dynamic)
-        glBindVertexArray(dynamicVAO);
-        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(outlineVertices.size()));
+        // draw edge outlines with edge shader
+        glUseProgram(edgeShaderProgram);
+        glUniform1f(edgeHalfWidthLocation, HalfWidth);
+        glUniform1f(edgeHalfHeightLocation, HalfHeight);
+        
+        // Set mouse position and barrier settings for edge rendering
+        glm::vec2 mousePos(static_cast<float>(mouseX), Height - static_cast<float>(mouseY));
+        glUniform2f(mousePosLocation, mousePos.x, mousePos.y);
+        glUniform1f(barrierRadiusLocation, settings.barrier.radius);
+        glUniform1f(fadeAreaLocation, settings.barrier.fadeArea);
+        glUniform1i(reverseModeLocation, settings.barrier.reverse ? 1 : 0);
+        
+        // Set wave effect uniforms
+        if (waveActive) {
+            float waveProgress = (glfwTime - waveStartTime) / waveDuration;
+            float waveX = -settings.wave.width * 0.5f + waveProgress * (Width + settings.wave.width);
+            
+            glUniform1f(waveProgressLocation, waveProgress);
+            glUniform1f(waveXLocation, waveX);
+            glUniform1f(waveWidthLocation, settings.wave.width);
+            glUniform4f(waveColorLocation, settings.wave.color[0], settings.wave.color[1], 
+                       settings.wave.color[2], settings.wave.color[3]);
+        } else {
+            // Disable wave effect
+            glUniform1f(waveProgressLocation, -1.0f);
+            glUniform1f(waveXLocation, -999999.0f);
+            glUniform1f(waveWidthLocation, 0.0f);
+            glUniform4f(waveColorLocation, 0.0f, 0.0f, 0.0f, 0.0f);
+        }
+        
+        glBindVertexArray(edgeVAO);
+        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(edgeVertices.size()));
         glBindVertexArray(0);
 
         glUseProgram(0);
@@ -444,12 +444,13 @@ int main() {
     RemoveTrayIcon(hwnd);
     DestroyIcon(hIcon);
 
-    glDeleteProgram(shaderProgram);
+    glDeleteProgram(staticShaderProgram);
+    glDeleteProgram(edgeShaderProgram);
 
     glDeleteVertexArrays(1, &staticVAO);
     glDeleteBuffers(1, &staticVBO);
-    glDeleteVertexArrays(1, &dynamicVAO);
-    glDeleteBuffers(1, &dynamicVBO);
+    glDeleteVertexArrays(1, &edgeVAO);
+    glDeleteBuffers(1, &edgeVBO);
 
     glfwDestroyWindow(window);
     glfwTerminate();

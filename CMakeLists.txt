@@ -5,6 +5,13 @@ project(ShahrFlow LANGUAGES CXX C)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Force Release configuration only
+set(CMAKE_CONFIGURATION_TYPES Release)
+set(CMAKE_BUILD_TYPE Release)
+
+# Set Windows subsystem and entry point
+set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT ShahrFlow)
+
 # General compiler flags for both debug and release
 add_compile_options(
     /W3           # Warning level 3
@@ -45,15 +52,28 @@ set(RESOURCES
 # Additional files to copy
 set(EXTRA_FILES
     resource/settings.json
-    shaders/vertex.glsl
-    shaders/fragment.glsl
+    shaders/static_vertex.glsl
+    shaders/static_fragment.glsl
+    shaders/edge_vertex.glsl
+    shaders/edge_fragment.glsl
 )
 
-# Create the executable
+# Create the executable with Windows subsystem
 add_executable(ShahrFlow ${SOURCES} ${HEADERS} ${RESOURCES})
+
+# Set Windows subsystem to avoid console window
+set_target_properties(ShahrFlow PROPERTIES
+    WIN32_EXECUTABLE TRUE
+    VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+)
 
 if(MSVC)
     target_compile_definitions(${PROJECT_NAME} PRIVATE "_UNICODE" "UNICODE")
+    
+    # Set entry point to main (not WinMain) even with Windows subsystem
+    set_target_properties(ShahrFlow PROPERTIES
+        LINK_FLAGS "/ENTRY:mainCRTStartup"
+    )
 endif()
 
 # Link libraries
@@ -65,21 +85,20 @@ target_link_libraries(ShahrFlow
 # Set library directories
 target_link_directories(ShahrFlow PRIVATE lib)
 
-# Configuration-specific settings
-# Release configuration
-target_compile_options(ShahrFlow PRIVATE $<$<CONFIG:Release>:
+# Release configuration settings (only configuration)
+target_compile_options(ShahrFlow PRIVATE
     /MT           # MultiThreaded runtime
     /DNDEBUG
-    /D_CONSOLE
     /GL           # Whole program optimization
     /O2           # Optimize for speed
->)
+)
 
-target_link_options(ShahrFlow PRIVATE $<$<CONFIG:Release>:
+target_link_options(ShahrFlow PRIVATE
     /LTCG         # Link-time code generation
     /OPT:REF      # Optimize references
     /OPT:ICF      # Enable COMDAT folding
->)
+    /SUBSYSTEM:WINDOWS  # Windows subsystem (no console)
+)
 
 # Copy additional files to build directory
 add_custom_command(TARGET ShahrFlow POST_BUILD
