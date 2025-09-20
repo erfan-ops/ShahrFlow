@@ -2,7 +2,7 @@
     "fps": 60,
     "vsync": false,
   
-    "hexagon-size": 30,
+    "hexagon-size": 45,
 
     "edges": {
       "width": 2,

@@ -12,46 +12,49 @@
 #include <thread>
 #include <cmath>
 #include <functional>
+#include <random>
+#include <vector>
+#include <memory>
 
 #include "settings.h"
 #include "desktopUtils.h"
 #include "trayUtils.h"
 #include "utils.h"
 
+// --- Random engine (single global engine, seeded once) ---
+static std::random_device rd_global;
+static std::mt19937 gen_global(rd_global());
 
+static float randomUniformGlobal(float start, float end) {
+    std::uniform_real_distribution<> dist(start, end);
+    return static_cast<float>(dist(gen_global));
+}
 
 // main window
 GLFWwindow* window;
 
-// handles tray events
+// handles tray events (unchanged)
 static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-	if (msg == WM_TRAYICON) {
-		if (lParam == WM_RBUTTONUP) {
-			// Create a popup menu
-			HMENU menu = CreatePopupMenu();
-			AppendMenu(menu, MF_STRING, 1, L"Quit");
+    if (msg == WM_TRAYICON) {
+        if (lParam == WM_RBUTTONUP) {
+            HMENU menu = CreatePopupMenu();
+            AppendMenu(menu, MF_STRING, 1, L"Quit");
+            POINT cursorPos;
+            GetCursorPos(&cursorPos);
+            SetForegroundWindow(hwnd);
+            int selection = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY, cursorPos.x - 120, cursorPos.y - 22, 0, hwnd, NULL);
+            DestroyMenu(menu);
 
-			// Get the cursor position
-			POINT cursorPos;
-			GetCursorPos(&cursorPos);
+            if (selection == 1) {
+                glfwSetWindowShouldClose(window, GLFW_TRUE);
+            }
+        }
+    }
 
-			// Show the menu
-			SetForegroundWindow(hwnd);
-			// Example with TPM_NONOTIFY to avoid blocking
-			int selection = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY, cursorPos.x - 120, cursorPos.y - 22, 0, hwnd, NULL);
-			DestroyMenu(menu);
-
-			// Handle the menu selection
-			if (selection == 1) {
-				glfwSetWindowShouldClose(window, GLFW_TRUE);
-			}
-		}
-	}
-
-	return DefWindowProcW(hwnd, msg, wParam, lParam);
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
-// Vertex structure (2 values for x and y, 4 values for color)
+// Vertex structure (same as your original)
 struct Vertex {
     float x;
     float y;
@@ -66,20 +69,37 @@ struct Vertex {
     Vertex(float x, float y, Color color) : x(x), y(y), r(color[0]), g(color[1]), b(color[2]), a(color[3]) {}
 };
 
+// Edge storage for dynamic outlines
+struct EdgeData {
+    glm::vec2 p1;
+    glm::vec2 p2;
+    Color color;
+    float width;
+};
+
+// Helper: point-to-segment distance (kept as lambda originally)
+static float pointToSegmentDist(const glm::vec2& p, const glm::vec2& a, const glm::vec2& b) {
+    glm::vec2 ab = b - a;
+    glm::vec2 ap = p - a;
+    float denom = glm::dot(ab, ab);
+    if (denom == 0.0f) return glm::length(p - a);
+    float t = glm::dot(ap, ab) / denom;
+    t = glm::clamp(t, 0.0f, 1.0f);
+    glm::vec2 closest = a + t * ab;
+    return glm::length(p - closest);
+}
 
 int main() {
+    // ---------- GLFW / GL init ----------
     glfwInit();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3); // Request OpenGL 3.3 Core
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-
     const int iWidth = GetSystemMetrics(SM_CXVIRTUALSCREEN);
     const int iHeight = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-
     const float Width = static_cast<float>(iWidth);
     const float Height = static_cast<float>(iHeight);
-
     const float HalfWidth = Width * 0.5f;
     const float HalfHeight = Height * 0.5f;
 
@@ -102,20 +122,16 @@ int main() {
     HWND hwnd = glfwGetWin32Window(window);
     SetWindowLongPtr(hwnd, GWLP_WNDPROC, (LONG_PTR)WindowProc);
 
-
     using GameTickFunc = void(*)(const float, const float, float&);
     GameTickFunc tickFunc;
 
     glfwMakeContextCurrent(window);
-    
-    // only use gameTick when VSync is false
+
     if (settings.vsync) {
         glfwSwapInterval(1);
         tickFunc = [](const float, const float, float&) {};
     } else {
         glfwSwapInterval(0);
-
-        // sleeps so that each frame took `stepInterval` seconds to complete
         tickFunc = [](const float frameTime, const float stepInterval, float& fractionalTime) {
             if (frameTime < stepInterval) {
                 float totalSleepTime = (stepInterval - frameTime) + fractionalTime;
@@ -125,41 +141,40 @@ int main() {
             }
         };
     }
-    
+
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
         std::cerr << "Failed to initialize GLAD\n";
         return -1;
     }
 
     glEnable(GL_MULTISAMPLE);
-
-    // enabling alpha channel
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    // variables to store the mouse position
-    double mouseX, mouseY;
+    // ---------- mouse ----------
+    double mouseX = 0.0, mouseY = 0.0;
 
-    std::vector<Vertex> vertices;
+    // ---------- geometry storage ----------
+    std::vector<Vertex> triangleVertices; // static: generated once at startup (fills)
+    std::vector<EdgeData> edges;          // list of edges for outlines (positions/color/width)
+    std::vector<Vertex> outlineVertices;  // dynamic: regenerated each frame (outlines)
 
-    // Helper to add a triangle (fill only)
-    auto addTriangle = [&](glm::vec2 p1, glm::vec2 p2, glm::vec2 p3, Color color) {
-        vertices.emplace_back(p1.x, p1.y, color[0], color[1], color[2], color[3]);
-        vertices.emplace_back(p2.x, p2.y, color[0], color[1], color[2], color[3]);
-        vertices.emplace_back(p3.x, p3.y, color[0], color[1], color[2], color[3]);
+    // ---------- helpers to add geometry ----------
+    auto addTriangleStatic = [&](const glm::vec2& p1, const glm::vec2& p2, const glm::vec2& p3, Color color) {
+        triangleVertices.emplace_back(p1.x, p1.y, color[0], color[1], color[2], color[3]);
+        triangleVertices.emplace_back(p2.x, p2.y, color[0], color[1], color[2], color[3]);
+        triangleVertices.emplace_back(p3.x, p3.y, color[0], color[1], color[2], color[3]);
     };
 
-    auto pointToSegmentDist = [](glm::vec2 p, glm::vec2 a, glm::vec2 b) -> float {
-        glm::vec2 ab = b - a;
-        glm::vec2 ap = p - a;
-        float t = glm::dot(ap, ab) / glm::dot(ab, ab);
-        t = glm::clamp(t, 0.0f, 1.0f);
-        glm::vec2 closest = a + t * ab;
-        return glm::length(p - closest);
+    auto pushEdgeForDynamic = [&](const glm::vec2& p1, const glm::vec2& p2, Color color, float width) {
+        EdgeData e;
+        e.p1 = p1; e.p2 = p2; e.width = width;
+        e.color[0] = color[0]; e.color[1] = color[1]; e.color[2] = color[2]; e.color[3] = color[3];
+        edges.push_back(e);
     };
 
-    // Helper to add a thick line as two triangles (outline, with alpha fade by mouse)
-    auto addEdge = [&](glm::vec2 p1, glm::vec2 p2, Color color, float width) {
+    // dynamic outline creation for a single edge (uses current mouse)
+    auto addEdgeDynamicToOutlineVertices = [&](const glm::vec2& p1, const glm::vec2& p2, Color color, float width, double curMouseX, double curMouseY) {
         glm::vec2 edge = glm::normalize(p2 - p1);
         glm::vec2 normal(-edge.y, edge.x);
         glm::vec2 offset = normal * (width * 0.5f);
@@ -169,8 +184,7 @@ int main() {
         glm::vec2 q3 = p2 - offset;
         glm::vec2 q4 = p1 - offset;
 
-        // Calculate alpha based on mouse distance
-        glm::vec2 mouse(mouseX, Height - mouseY);
+        glm::vec2 mouse(static_cast<float>(curMouseX), Height - static_cast<float>(curMouseY));
         float dist = pointToSegmentDist(mouse, p1, p2);
         float alpha = 0.0f;
         if (dist < settings.barrier.radius) {
@@ -178,41 +192,32 @@ int main() {
         }
 
         // First triangle
-        vertices.emplace_back(q1.x, q1.y, color[0], color[1], color[2], alpha);
-        vertices.emplace_back(q2.x, q2.y, color[0], color[1], color[2], alpha);
-        vertices.emplace_back(q3.x, q3.y, color[0], color[1], color[2], alpha);
+        outlineVertices.emplace_back(q1.x, q1.y, color[0], color[1], color[2], alpha);
+        outlineVertices.emplace_back(q2.x, q2.y, color[0], color[1], color[2], alpha);
+        outlineVertices.emplace_back(q3.x, q3.y, color[0], color[1], color[2], alpha);
 
         // Second triangle
-        vertices.emplace_back(q1.x, q1.y, color[0], color[1], color[2], alpha);
-        vertices.emplace_back(q3.x, q3.y, color[0], color[1], color[2], alpha);
-        vertices.emplace_back(q4.x, q4.y, color[0], color[1], color[2], alpha);
+        outlineVertices.emplace_back(q1.x, q1.y, color[0], color[1], color[2], alpha);
+        outlineVertices.emplace_back(q3.x, q3.y, color[0], color[1], color[2], alpha);
+        outlineVertices.emplace_back(q4.x, q4.y, color[0], color[1], color[2], alpha);
     };
 
-    // Helper to add a filled triangle + outline edges
-    auto addTriangleWithOutline = [&](glm::vec2 p1, glm::vec2 p2, glm::vec2 p3, Color fillColor, Color edgeColor, float edgeWidth) {
-        // Add filled triangle
-        addTriangle(p1, p2, p3, fillColor);
+    // This builds the triangles (with randomization applied once) and stores the edges for outlines.
+    auto insertHexagonsInit = [&]() -> void {
+        float hexagonWidth = 1.7320508075688772f * settings.hexagonSize;
+        float hexagonSliceWidth = 0.8660254037844386f * settings.hexagonSize;
+        float hexagonHeight = 2.0f * settings.hexagonSize;
+        float hexagonYDis = 1.5f * settings.hexagonSize;
+        float hexagonHalfSize = 0.5f * settings.hexagonSize;
+        int hexagonsInWidth = static_cast<int>(Width / hexagonWidth) + 2;
+        int hexagonsInHeight = static_cast<int>(Height / hexagonYDis) + 1;
 
-        // Add edges
-        addEdge(p1, p2, edgeColor, edgeWidth);
-        addEdge(p2, p3, edgeColor, edgeWidth);
-        addEdge(p3, p1, edgeColor, edgeWidth);
-    };
+        triangleVertices.reserve(hexagonsInHeight * hexagonsInWidth * 6 * 3); // 6 triangles per hexagon, 3 verts each
+        edges.reserve(hexagonsInHeight * hexagonsInWidth * 6 * 3); // 3 edges per triangle -> safe reserve
 
-    float hexagonWidth = 1.7320508075688772f * settings.hexagonSize;
-    float hexagonSliceWidth = 0.8660254037844386f * settings.hexagonSize;
-    float hexagonHeight = 2.0f * settings.hexagonSize;
-    float hexagonYDis = 1.5f * settings.hexagonSize;
-    float hexagonHalfSize = 0.5f * settings.hexagonSize;
-    int hexagonsInWidth = static_cast<int>(Width / hexagonWidth) + 2;
-    int hexagonsInHeight = static_cast<int>(Height / hexagonYDis) + 1;
-
-    vertices.reserve(hexagonsInHeight * hexagonsInWidth * 90);
-
-    auto insertHexagons = [&]() -> void {
         for (int iy = 0; iy <= hexagonsInHeight; iy++) {
             float y = iy * hexagonYDis;
-            for (float x = iy % 2 ? 0.0f : hexagonSliceWidth; x <= Width + hexagonWidth; x += hexagonWidth) {
+            for (float x = (iy % 2 ? 0.0f : hexagonSliceWidth); x <= Width + hexagonWidth; x += hexagonWidth) {
                 glm::vec2 c(x, y);
                 glm::vec2 top(x, y + settings.hexagonSize);
                 glm::vec2 bottom(x, y - settings.hexagonSize);
@@ -225,50 +230,85 @@ int main() {
                 Color fill2 = {0.773f, 0.188f, 0.188f, 1.0f};
                 Color fill3 = {0.455f, 0.165f, 0.165f, 1.0f};
 
-                // 6 triangles making a hexagon, each with outline
-                addTriangleWithOutline(c, top, leftTop, fill1, settings.edges.color, settings.edges.width);
-                addTriangleWithOutline(c, top, rightTop, fill1, settings.edges.color, settings.edges.width);
-                addTriangleWithOutline(c, leftTop, leftBottom, fill2, settings.edges.color, settings.edges.width);
-                addTriangleWithOutline(c, rightTop, rightBottom, fill3, settings.edges.color, settings.edges.width);
-                addTriangleWithOutline(c, bottom, leftBottom, fill2, settings.edges.color, settings.edges.width);
-                addTriangleWithOutline(c, bottom, rightBottom, fill3, settings.edges.color, settings.edges.width);
+                // For each of the 6 triangles: compute random once and add static triangle + push edges
+                auto addTriWithOneTimeRandom = [&](const glm::vec2& p1, const glm::vec2& p2, const glm::vec2& p3, Color baseFill) {
+                    float triangleY = (p1.y + p2.y + p3.y) / 3.0f;
+                    float normalizedY = triangleY / Height;
+                    float probability = pow(normalizedY, 2.0f); // quadratic bias: more likely at top
+                    Color fill = baseFill;
+                    if (randomUniformGlobal(0.0f, 1.0f) < probability) {
+                        fill = {1.0f, 1.0f, 1.0f, 1.0f};
+                    }
+                    addTriangleStatic(p1, p2, p3, fill);
+
+                    // store edges so outlines can be generated each frame
+                    pushEdgeForDynamic(p1, p2, settings.edges.color, settings.edges.width);
+                    pushEdgeForDynamic(p2, p3, settings.edges.color, settings.edges.width);
+                    pushEdgeForDynamic(p3, p1, settings.edges.color, settings.edges.width);
+                };
+
+                addTriWithOneTimeRandom(c, top, leftTop, fill1);
+                addTriWithOneTimeRandom(c, top, rightTop, fill1);
+                addTriWithOneTimeRandom(c, leftTop, leftBottom, fill2);
+                addTriWithOneTimeRandom(c, rightTop, rightBottom, fill3);
+                addTriWithOneTimeRandom(c, bottom, leftBottom, fill2);
+                addTriWithOneTimeRandom(c, bottom, rightBottom, fill3);
             }
         }
     };
 
-    // initiating VAO and VBO
-    GLuint VAO, VBO;
+    // ---------- Create VAOs / VBOs ----------
+    GLuint staticVAO = 0, staticVBO = 0;
+    GLuint dynamicVAO = 0, dynamicVBO = 0;
 
-    glGenVertexArrays(1, &VAO);
-    glGenBuffers(1, &VBO);
+    glGenVertexArrays(1, &staticVAO);
+    glGenBuffers(1, &staticVBO);
 
-    glBindVertexArray(VAO);
+    glGenVertexArrays(1, &dynamicVAO);
+    glGenBuffers(1, &dynamicVBO);
 
-    // VBO (dynamic since positions change)
-    glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(
-        GL_ARRAY_BUFFER,
-        vertices.size() * sizeof(Vertex),
-        vertices.data(),
-        GL_DYNAMIC_DRAW
-    );
+    // ---------- Build static geometry (triangles) once ----------
+    insertHexagonsInit(); // fills triangleVertices and edges (one-time)
 
-    // vec2 for the position
+    // Bind static VAO & VBO and upload triangle data
+    glBindVertexArray(staticVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, staticVBO);
+    if (!triangleVertices.empty()) {
+        glBufferData(GL_ARRAY_BUFFER,
+                     triangleVertices.size() * sizeof(Vertex),
+                     triangleVertices.data(),
+                     GL_STATIC_DRAW);
+    } else {
+        // ensure there's at least an empty buffer
+        glBufferData(GL_ARRAY_BUFFER, 1, nullptr, GL_STATIC_DRAW);
+    }
+
+    // layout: position (location 0) vec2
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
     glEnableVertexAttribArray(0);
 
-    // vec4 for the color
+    // layout: color (location 1) vec4
     glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, r));
     glEnableVertexAttribArray(1);
 
     glBindVertexArray(0);
 
+    // Setup dynamic VAO (for outlines). We'll upload data each frame to dynamicVBO.
+    glBindVertexArray(dynamicVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, dynamicVBO);
+    // allocate small initial size; we'll reallocate with glBufferData each frame
+    glBufferData(GL_ARRAY_BUFFER, 1, nullptr, GL_DYNAMIC_DRAW);
 
-    // compiling shaders
-    GLuint shaderProgram = shaderUtils::compileShaders(
-        "shaders/vertex.glsl",
-        "shaders/fragment.glsl"
-    );
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, r));
+    glEnableVertexAttribArray(1);
+
+    glBindVertexArray(0);
+
+    // ---------- compile shaders ----------
+    GLuint shaderProgram = shaderUtils::compileShaders("shaders/vertex.glsl", "shaders/fragment.glsl");
     if (shaderProgram == 0) {
         std::cerr << "Failed to compile shaders!" << std::endl;
         return -1;
@@ -277,86 +317,91 @@ int main() {
     GLint halfWidthLocation  = glGetUniformLocation(shaderProgram, "halfWidth");
     GLint halfHeightLocation = glGetUniformLocation(shaderProgram, "halfHeight");
 
-    // interval between frames (useless if vsync is on)
+    // frame timing
     const float stepInterval = 1.0f / settings.targetFPS;
-
     float dt{0};
-	float fractionalTime{0};
+    float fractionalTime{0};
 
-    // app icon
+    // app icon, tray, wallpaper setup (same as original)
     HICON hIcon = LoadIconFromResource();
-
-	AddTrayIcon(hwnd, hIcon, L"Just a Simple Icon");
-
-    // current wallpaper's path used to set the original wallpaper back when the application is closed
+    AddTrayIcon(hwnd, hIcon, L"Just a Simple Icon");
     std::unique_ptr<wchar_t[]> originalWallpaper(GetCurrentWallpaper());
-
-    // setting the window as the desktop background
     SetAsDesktop(hwnd);
-
     glfwShowWindow(window);
 
-    // timestamps to keep track of delta-time
     auto newF = std::chrono::high_resolution_clock::now();
-	auto oldF = std::chrono::high_resolution_clock::now();
+    auto oldF = std::chrono::high_resolution_clock::now();
 
-    // main loop
+    // ---------- Main loop ----------
     while (!glfwWindowShouldClose(window)) {
-        // calculating delta-time
         oldF = newF;
-		newF = std::chrono::high_resolution_clock::now();
-		dt = std::chrono::duration<float>(newF - oldF).count();
+        newF = std::chrono::high_resolution_clock::now();
+        dt = std::chrono::duration<float>(newF - oldF).count();
 
-        // getting the mouse position
         glfwGetCursorPos(window, &mouseX, &mouseY);
 
-        // clearing the screen
-        glClearColor(0.f, 0.f, 0.f, 1.f);
+        glClearColor(1.f, 1.f, 1.f, 1.f);
         glClear(GL_COLOR_BUFFER_BIT);
 
-        insertHexagons();
+        // --- Build outlines based on edges and current mouse (only this happens per-frame) ---
+        outlineVertices.clear();
+        outlineVertices.reserve(edges.size() * 6); // each edge -> 6 vertices (two tris)
 
-        // copying the data into the VBO
-        glBindBuffer(GL_ARRAY_BUFFER, VBO);
-        glBufferData(
-            GL_ARRAY_BUFFER,
-            vertices.size() * sizeof(Vertex),
-            vertices.data(),
-            GL_DYNAMIC_DRAW
-        );
-        
+        for (const EdgeData& e : edges) {
+            addEdgeDynamicToOutlineVertices(e.p1, e.p2, e.color, e.width, mouseX, mouseY);
+        }
+
+        // upload outlineVertices to dynamic VBO
+        glBindBuffer(GL_ARRAY_BUFFER, dynamicVBO);
+        if (!outlineVertices.empty()) {
+            glBufferData(GL_ARRAY_BUFFER,
+                         outlineVertices.size() * sizeof(Vertex),
+                         outlineVertices.data(),
+                         GL_DYNAMIC_DRAW);
+        } else {
+            // keep at least a tiny buffer to avoid undefined behaviour
+            glBufferData(GL_ARRAY_BUFFER, 1, nullptr, GL_DYNAMIC_DRAW);
+        }
+
+        // use shader and set uniforms
         glUseProgram(shaderProgram);
-
         glUniform1f(halfWidthLocation, HalfWidth);
         glUniform1f(halfHeightLocation, HalfHeight);
-        
-        // actual drawing
-        glBindVertexArray(VAO);
-        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertices.size()));
+
+        // draw static triangles (fills)
+        glBindVertexArray(staticVAO);
+        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(triangleVertices.size()));
+        glBindVertexArray(0);
+
+        // draw outlines (dynamic)
+        glBindVertexArray(dynamicVAO);
+        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(outlineVertices.size()));
         glBindVertexArray(0);
 
         glUseProgram(0);
 
-        // swapping buffers
         glfwSwapBuffers(window);
         glfwPollEvents();
 
         tickFunc(dt, stepInterval, fractionalTime);
     }
 
-    // reset to the original wallpaper
+    // ---------- cleanup & restore wallpaper ----------
     SetParent(hwnd, nullptr);
-	SystemParametersInfo(SPI_SETDESKWALLPAPER, 0, static_cast<PVOID>(originalWallpaper.get()), SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
+    SystemParametersInfo(SPI_SETDESKWALLPAPER, 0, static_cast<PVOID>(originalWallpaper.get()), SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
 
-    // remove tray icon from the system tray menu
     RemoveTrayIcon(hwnd);
     DestroyIcon(hIcon);
 
     glDeleteProgram(shaderProgram);
-    glDeleteVertexArrays(1, &VAO);
-    glDeleteBuffers(1, &VBO);
+
+    glDeleteVertexArrays(1, &staticVAO);
+    glDeleteBuffers(1, &staticVBO);
+    glDeleteVertexArrays(1, &dynamicVAO);
+    glDeleteBuffers(1, &dynamicVBO);
 
     glfwDestroyWindow(window);
     glfwTerminate();
+
     return 0;
 }
