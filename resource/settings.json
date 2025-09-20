@@ -1,22 +1,24 @@
 {
-    "fps": 60,
+    "fps": 120,
     "vsync": false,
   
     "hexagon-size": 50,
 
     "edges": {
-      "width": 2,
+      "width": 1.5,
       "color": [ 0.996, 0.843, 0.843, 0.6 ]
     },
 
     "mouse-barrier": {
-      "radius": 200
+      "radius": 200,
+      "reverse": false,
+      "fade-area": 150
     },
 
     "wave": {
       "speed": 420,
-      "width": 220,
-      "interval": 5,
+      "width": 370,
+      "interval": 6.2,
       "color": [1, 0, 0, 1]
     },
 

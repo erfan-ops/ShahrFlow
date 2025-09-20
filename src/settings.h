@@ -20,6 +20,8 @@ struct Settings {
 
 	struct Barrier {
 		float radius;
+		bool reverse;
+		float fadeArea;
 	} barrier;
 
 	struct Wave {

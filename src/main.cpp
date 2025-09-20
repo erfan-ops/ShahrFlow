@@ -194,9 +194,19 @@ int main() {
         glm::vec2 mouse(static_cast<float>(curMouseX), Height - static_cast<float>(curMouseY));
         float dist = pointToSegmentDist(mouse, p1, p2);
         float alpha = 0.0f;
-        if (dist < settings.barrier.radius) {
-            alpha = (1.0f - dist / settings.barrier.radius) * color[3];
+        if (settings.barrier.reverse) {
+            if (dist > settings.barrier.radius + settings.barrier.fadeArea) {
+                alpha = color[3];
+            } else if (dist > settings.barrier.radius) {
+                alpha = ((dist - settings.barrier.radius) / settings.barrier.fadeArea) * color[3];
+            }
         }
+        else {
+            if (dist < settings.barrier.radius) {
+                alpha = (1.0f - dist / settings.barrier.radius) * color[3];
+            }
+        }
+        
 
         glm::vec2 midpoint = (p1 + p2) * 0.5f;
 
@@ -213,10 +223,15 @@ int main() {
                 factor = glm::clamp(factor, 0.0f, 1.0f);
 
                 // Pure wave color, but alpha fades out toward edges
-                color[0] = settings.wave.color[0];
-                color[1] = settings.wave.color[1];
-                color[2] = settings.wave.color[2];
-                alpha    = settings.wave.color[3] * factor;
+                float waveAlpha = settings.wave.color[3] * factor;
+                float alphaNormalizer = waveAlpha + alpha;
+                waveAlpha /= alphaNormalizer;
+                alpha /= alphaNormalizer;
+
+                color[0] = color[0] * alpha + settings.wave.color[0] * waveAlpha;
+                color[1] = color[1] * alpha + settings.wave.color[1] * waveAlpha;
+                color[2] = color[2] * alpha + settings.wave.color[2] * waveAlpha;
+                alpha = 1.0f;
             }
         }
 

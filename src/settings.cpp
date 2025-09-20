@@ -19,6 +19,8 @@ Settings loadSettings(const std::string& filename) {
 	settings.edges.color = j["edges"]["color"].get<Color>();
 
 	settings.barrier.radius = j["mouse-barrier"]["radius"];
+	settings.barrier.reverse = j["mouse-barrier"]["reverse"];
+	settings.barrier.fadeArea= j["mouse-barrier"]["fade-area"];
 
 	settings.wave.speed = j["wave"]["speed"];
 	settings.wave.width = j["wave"]["width"];
