@@ -1,3 +1,7 @@
+// LEGITIMATE USE: This application provides visual effects
+// for desktop enhancement. No malicious intent.
+
+
 #define NOMINMAX
 #include <windows.h>
 
@@ -207,8 +211,8 @@ int main() {
         const int hexagonsInWidth = static_cast<int>(Width / hexagonWidth) + 2;
         const int hexagonsInHeight = static_cast<int>(Height / hexagonYDis) + 1;
 
-        triangleVertices.reserve(hexagonsInHeight * hexagonsInWidth * 6 * 3); // 6 triangles per hexagon, 3 verts each
-        edgeVertices.reserve(hexagonsInHeight * hexagonsInWidth * 6 * 3 * 6); // 3 edges per triangle, 6 verts per edge
+        triangleVertices.reserve(hexagonsInHeight * hexagonsInWidth * 18); // 6 triangles per hexagon, 3 verts each
+        edgeVertices.reserve(hexagonsInHeight * hexagonsInWidth * 108); // 3 edges per triangle, 6 verts per edge
 
         for (int iy = 0; iy <= hexagonsInHeight; iy++) {
             float y = iy * hexagonYDis;
